@@ -15,9 +15,9 @@ library(vegan)
 #
 #
 #
-setwd("C:/Users/Laurel/Desktop/Analysis/Rcode/Tidy")
-Fishinfo = read.csv("2020_All Sites by Year_Fish info_v2.csv")
-Site = read.csv("2020_All sites_Site Info_v2.csv")
+
+Fishinfo = read.csv("Tidy/2020_All Sites by Year_Fish info_v2.csv")
+Site = read.csv("Tidy/2020_All sites_Site Info_v2.csv")
 
 #Species list
 #all.sp = levels(Fishinfo$CommonName)
