@@ -15,7 +15,7 @@ library(vegan)
 #
 #
 #
-# checking email
+# checking email FIXED?!?!
 
 Fishinfo = read.csv("Tidy/2020_All Sites by Year_Fish info_v2.csv")
 Site = read.csv("Tidy/2020_All sites_Site Info_v2.csv")
