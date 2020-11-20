@@ -18,7 +18,7 @@ library(vegan)
 #
 #
 
-Fishinfo = read.csv("Tidy_data/All sites data_2020.csv")
+Fishinfo = read.csv("data/All sites data_2020.csv")
 
 
 #replace NA with 0
@@ -193,7 +193,8 @@ Fishinfo2 = Fishinfo2 %>% mutate(
 
 #Don't group "Unknown Fish" anywhere. 
 
-write.csv(Fishinfo2, file = "All sites data_Tidied.csv")
+
+write.csv(Fishinfo2, file = "data/All sites data_Tidied.csv")
 
 ################################################################10/6/2020
 
@@ -224,23 +225,23 @@ write.csv(Fishinfo2, file = "All sites data_Tidied.csv")
 
 SiteSumm = Fishinfo2 %>% 
   group_by(SiteName) %>% 
-  summarise(avg.Abundance = mean(TotalFish),
-            avg.Richness = mean(Richness),    
-            avg.Biomass = mean(Biomass),
-            avg.CPUEpermin = mean(CPUE.Fishpermin),
-            avg.CPUEper5min = mean(CPUE.Fishper5min),
-            avg.CPUEperhook = mean(CPUE.Fishpervalidhook),
-            avg.CPUEper75hooks = mean(CPUE.Fishfor75hooks),
+  summarise(avg.Abundance = mean(HookswithFish),
+            #avg.Richness = mean(Richness),    
+            #avg.Biomass = mean(Biomass),
+            #avg.CPUEpermin = mean(CPUE.Fishpermin),
+            #avg.CPUEper5min = mean(CPUE.Fishper5min),
+            #avg.CPUEperhook = mean(CPUE.Fishpervalidhook),
+            #avg.CPUEper75hooks = mean(CPUE.Fishfor75hooks),
             avg.Piscivore = mean(Piscivore),
             avg.Planktivore = mean(Planktivore),
             avg.Carnivore = mean(Carnivore),
-            avg.Target = mean(Target.sp),
-            avg.Nontarget = mean(Nontarget.sp),
-            avg.PiscivoreBio = mean(Piscivore.bio),
-            avg.PlanktivoreBio = mean(Planktivore.bio),
-            avg.CarnivoreBio = mean(Carnivore.bio),
-            avg.TargetBio = mean(Target.bio),
-            avg.NontargetBio = mean(Nontarget.bio),
+            avg.Target = mean(Target),
+            avg.Nontarget = mean(Nontarget),
+            #avg.PiscivoreBio = mean(Piscivore.bio),
+            #avg.PlanktivoreBio = mean(Planktivore.bio),
+            #avg.CarnivoreBio = mean(Carnivore.bio),
+            #avg.TargetBio = mean(Target.bio),
+            #avg.NontargetBio = mean(Nontarget.bio),
             avg.PiscivoreCPUE = mean(Piscivore.CPUE),
             avg.PlanktivoreCPUE = mean(Planktivore.CPUE),
             avg.CarnivoreCPUE = mean(Carnivore.CPUE),
@@ -253,7 +254,7 @@ SiteSumm = Fishinfo2 %>%
 
 
 
-write.csv(SiteSumm, file = "SiteSumm.csv")
+# write.csv(SiteSumm, file = "SiteSumm.csv")
 
 
 
