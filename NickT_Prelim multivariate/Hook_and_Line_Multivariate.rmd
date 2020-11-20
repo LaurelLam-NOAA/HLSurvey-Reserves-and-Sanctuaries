@@ -1,0 +1,621 @@
+---
+title: "TITLE HERE"
+author: Nick Tolimieri
+date: 
+output: 
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+    fig_caption: yes
+---
+
+
+```{r SETUP, include=FALSE}
+# A bunch of initial set up junk
+
+rm(list = ls()) # start with an empty environment
+
+# knitr stuff and libraries ####
+
+HomeFile = getwd()
+Fig_Loc = paste0(HomeFile,"/Figures/")
+Out_File =  paste0(HomeFile,"/Results/")
+
+# tools in use 
+# install.packages("devtools")
+library(knitr)
+library(tidyr)
+library(dplyr)
+library(stringr)
+library(tinytex)
+library(flextable)
+library(RColorBrewer)
+# display.brewer.all(colorblindFriendly = TRUE)
+
+# stats packages etc
+# devtools::install_github("fate-ewi/bayesdfa")
+library(vegan)
+library(BiodiversityR)
+library(pracma)
+
+# options
+knitr::opts_chunk$set(
+  fig.path = Fig_Loc,
+  cache.path = 'cache/graphics-', 
+  echo=FALSE,
+  error=FALSE,
+  include = TRUE,
+  dev='png',
+  dpi=300,
+  warning=FALSE,
+  #out.width = '100%',
+  fig.align='center' # doesn't always work in word output.
+  
+  )
+
+
+# some universal stuff for plotting
+# ps = 10 sets opints size to 10
+# cex is the  magnification
+# default text size for figure will be 10 point.
+# within the figure setting cex = 0.8 will give you 8 pt text
+
+par(ps=10, cex=1)
+
+```
+
+Last run: `r Sys.time()`
+
+# Step One: Quick look at the data
+
+```{r Import_Data}
+
+df0 = data.frame(read.csv( "CINMS_PrelimData for nmds.csv" , header=TRUE))
+
+# species to analyze
+fish.names = c("Bank.Rockfish" , 
+               "Blue.Rockfish" , 
+               "Bocaccio" ,
+               "California.Scorpionfish" , 
+               "California.Sheephead",
+               "Canary.Rockfish" ,
+               "Chilipepper",
+               "Copper.Rockfish" , 
+               "Cowcod" , 
+               "Flag.Rockfish", 
+               "Gopher.Rockfish", 
+               "Greenblotched.Rockfish",
+               "Greenspotted.Rockfish" ,   
+               "Greenstriped.Rockfish" ,
+               "Halfbanded.Rockfish" ,    
+               "Honeycomb.Rockfish" , 
+               "Lingcod" ,
+               "Lizardfish",
+               "Mexican.Rockfish" ,
+               "Ocean.Whitefish",
+               "Olive.Rockfish"  ,       
+               "Pacific.Bonito",
+               "Pacific.Mackerel" ,       
+               "Pink.Rockfish",
+               "Rosy.Rockfish" ,          
+               "Sanddab.Unidentified",
+               "Southern.Rock.Sole"  ,    
+               "Speckled.Rockfish" ,
+               "Spiny.Dogfish"  ,         
+               "Squarespot.Rockfish",
+               "Starry.Rockfish" ,        
+               "Swordspine.Rockfish",
+               "Treefish"  ,
+               "Unknown.Fish",
+               "Vermilion.Rockfish" ,     
+               "Widow.Rockfish","Yelloweye.Rockfish",   
+               "Yellowtail.Rockfish")
+
+# subset imported file based on column names
+
+fish = df0[ , fish.names]
+
+# some quick checks
+```
+
+
+Lots of multivariate stats do not do well with zeros. So we first want to have a look at how many of each spp were caught and probably drop out the rare species. You can mess with this.  
+  
+
+```{r Total_Catch_by_Species_Table}
+
+# get totals
+col_sums = data.frame(colSums(fish))
+col_sums$Species = row.names(col_sums) # transfer row.names to data.frame
+colnames(col_sums)[1] <- "Total Caught" # rename the first column
+col_sums <- col_sums[, c('Species','Total Caught')] # just reorders table
+
+# get number of drops
+fish_n = fish # make a new file
+fish_n = ifelse(fish > 0 , 1, 0) # convert to presense absense
+col_n = colSums(fish_n)
+col_sums = cbind(col_sums , col_n)
+colnames(col_sums)[3] <- "Drops"
+
+col_sums %>% flextable() %>% autofit() %>% # flextable makes pretty tables
+             add_header_lines("Table XX. Total observations and total drops observed by species.")
+```
+
+
+
+
+```{r Catch_Histogram , fig.width=6, fig.height=3, fig.cap="Distribution of total catch"}
+
+par( mfrow = c(1,1))
+hist(col_sums$Total, main=NA, xlab = 'Catch')
+hist(col_sums$Total[ col_sums$Total < 800], main=NA, xlab = 'Catch (max 800)')
+hist(col_sums$Total[ col_sums$Total < 100], main=NA, xlab = 'Catch (max 100)')
+
+
+```
+
+
+
+```{r Subset_fish}
+# get just those species seen some minimum number of times
+# for site-level nMDS analysis
+
+min_count = 20
+sppx = col_sums[ col_sums$`Total Caught` >= min_count, "Species"]
+
+fish_1 = fish[ , sppx]
+
+# replace NA's with zeros.  Should check why there are NAs
+fish_1[is.na(fish_1)] <- 0
+
+# remove rows with no fish. Can't calculate diversity metrics
+# find rows with no fish
+dfx = fish_1
+dfx = ifelse(dfx > 0, 1, 0)
+rsx = rowSums(dfx)
+
+# remove rows with no fish
+fish_site_level = fish_1[rsx > 0 , ]
+```
+
+# nMDS
+## Site-level nMDS ordination
+
+A quick look at  all the data. Here I've run a non-metric multi-dimensional scaling (nMDS) analysis. This is an unconstrained ordination, meaning that it does not "know" anything about from where the data points come.  More specifically, the nMDS does not know there are sites.  I've added the colors after the fact.  
+
+
+```{r nMDS_site_level, inlcude = FALSE}
+
+# nmds with sqrt tranform.  Change to 1/4 for forth-root transform
+# using bray-curtis dissimilartiy matrix
+
+# set transform here ####
+
+TRANSFORM = 'square-root' # 4th-root, log(x+1) , not, 
+
+if(TRANSFORM=='square-root'){fish_site_matrix <- as.matrix((fish_site_level)^(1/2))}
+if(TRANSFORM=='4th-root'){fish_site_matrix <- as.matrix((fish_site_level)^(1/2))}
+if(TRANSFORM=='log(x+1)'){fish_site_matrix <- as.matrix(log(fish_site_level))}
+if(TRANSFORM=='not'){fish_site_matrix <- as.matrix(fish_site_level)}
+if(TRANSFORM=='presence/absence'){fish_site_matrix <- ifelse(fish_site_level>0,1,0)
+                                  fish_site_level <- as.matrix(fish_site_matrix)}
+
+# this is the command to run the nMDS
+# I've turned it off because it takes a while
+# below I save and reload the results
+# site_mds <- metaMDS( fish_site_matrix , k=3, distance = 'bray')
+# saveRDS( site_mds , paste0(Out_File , "nMDS_site_level.rds"))
+
+site_mds <- readRDS(paste0(Out_File , "nMDS_site_level.rds"))
+
+```
+
+Fish had to be observed at least `r min_count` times. Sites had to have at least one species recorded  that year.  
+
+It is common to transform data for these types of analyses.  There is not a correct one for nMDS. Each transform emphasizes a different question.
+
+*No transform*: emphasizes the effect of abundance species
+
+*Square root*: reduces the effect of abundant species and places more emphasis on the whole assemblage
+
+*4th-root*: like the square-root but more so
+
+*log(x+1)*: even more so
+
+*Presence/Absence*: ignores abundance and just looks at which species are there
+
+
+Note: the data were `r TRANSFORM` transformed prior to analysis.  
+
+
+```{r stress_site_level}
+
+site_mds
+
+```
+The mds at the site level had a stress of `r round(site_mds$stress,2)` with `r site_mds$ndim` axes. Stress of 0.20 or lower is generally considered good. So with 3-axes the model is ok.  The two-dimension model had stress > 0.20.
+
+Below is a quick plot. I hate the colors, but they are 'color-blind' friendly. There is some spread but also some obvious clustering of data by Area.
+
+
+```{r plot_site_level_nMDS, fig.height= 6.5 , fig.width=6.5, fig.cap="nMDS ordination plots for site-level analyis."}
+# get some info for labeling
+
+labels_site = df0[rsx > 0 ,c("SurveyYear",'AreaDesc','SiteName')]
+
+legend_info <- data.frame(levels(as.factor(labels_site$AreaDesc)))
+legend_info$color = brewer.pal( nrow(legend_info) , "Dark2" )
+colnames(legend_info)[1] <- 'Area'
+
+labels_site$color = legend_info$color[ match( labels_site$AreaDesc, legend_info$Area)]
+
+par( mfrow = c(2,2) , mar = c(4,2,1,1), pty='s') # make is square
+
+ordiplot(site_mds , display = 'sites', choices = c(1,2))
+dfs = scores(site_mds)
+points( dfs[,1] , dfs[,2] , pch=19, col=labels_site$color)
+legend('topleft' , legend = legend_info$Area, pch=19, col=legend_info$color, bty='n', cex=0.8)
+
+ordiplot(site_mds , display = 'species', type = 'text', choices = c(1,2))
+
+
+ordiplot(site_mds , display = 'sites', choices = c(1,3))
+dfs = scores(site_mds)
+points( dfs[,1] , dfs[,3] , pch=19, col=labels_site$color)
+legend('topleft' , legend = legend_info$Area, pch=19, col=legend_info$color, bty='n', cex=0.8)
+
+ordiplot(site_mds , display = 'species', type = 'text', choices = c(1,3))
+
+```
+## Area-level ordination.
+
+We can clean things up a bit by looking just the areas. Here I just averaged the species abundance by area (AreaDesc) instead of site. Less detail but fewer points on the plots make it a bit easier to see patterns.   
+
+```{r nMDS_area_time , include=FALSE}
+
+# first mean by area
+# subset main file
+# for consistency use the same spp
+
+df1 = df0[ , c("SurveyYear","AreaDesc",'SiteName' , sppx )] 
+df2 = aggregate( . ~ SurveyYear + AreaDesc , data=df1 , FUN = mean)
+
+fish_area_level = df2[,sppx] # subset the above for selected species
+
+# uses teh TRANSFORM indicated above for consistency
+
+if(TRANSFORM=='square-root'){fish_area_matrix <- (fish_area_level)^(1/2)}
+if(TRANSFORM=='4th-root'){fish_area_matrix <- (fish_area_level)^(1/2)}
+if(TRANSFORM=='log(x+1)'){fish_area_matrix <- log(fish_area_level)}
+if(TRANSFORM=='not'){fish_area_matrix <- fish_area_level}
+if(TRANSFORM=='presence/absence'){fish_area_matrix <- ifelse(fish_area_level>0,1,0)}
+fish_area_matrix = as.matrix(fish_area_matrix)
+
+# doublecheck no zeros
+rsx2 = rowSums(fish_area_level)
+
+area_mds <- metaMDS( fish_area_matrix , k=2, distance = 'bray')
+
+saveRDS( area_mds , paste0(Out_File , "nMDS_area_level.rds"))
+area_mds <- readRDS(paste0(Out_File , "nMDS_area_level.rds"))
+
+area_mds
+
+```
+
+For the area-level nMDS, the stress was `r area_mds$stress` with `r area_mds$ndim` axes.We can see a much cleaner ordination.  Anacapa and Santa Rosa Flats are obviously different, in terms of fish community structure, from the other sites. 
+
+```{r plot_area_level_nMDS, fig.height= 6.5 , fig.width=6.5, fig.cap="nMDS ordination plots for area-level analyis Number indicate the year of the sample from 2000 on. Thus 10 is 2010."}
+# get some info for labeling
+
+labels_area = df2[ ,c("SurveyYear",'AreaDesc')]
+
+# legend_info <- data.frame(levels(as.factor(labels_area$AreaDesc)))
+# legend_info$color = brewer.pal( nrow(legend_info) , "Dark2" )
+# colnames(legend_info)[1] <- 'Area'
+
+labels_area$color = legend_info$color[ match( labels_area$AreaDesc, legend_info$Area)]
+
+par( mfrow = c(2,2) , mar = c(4,2,1,1), pty='s') # make is square
+
+ordiplot(area_mds , display = 'sites', choices = c(1,2))
+dfa = scores(area_mds)
+
+df2$yr = substring(df2$SurveyYear,3,4)
+
+points( dfa[,1] , dfa[,2] , pch=19, col=labels_area$color, cex = 2)
+text( dfa[,1] , dfa[,2], df2$yr , cex=0.7, col='white', font=2, pos = 1, offset=-0.3)
+
+ordiplot(area_mds , display = 'species', type = 'text', choices = c(1,2))
+
+# here I just add a fake plot to makes a place to place the legend. 
+# There are more sophisticated ways, but this is easy
+plot(1:10, 1:10, pch='', xaxt='n', yaxt='n' , bty='n', xlab=NA, ylab=NA)
+legend('topleft' , legend = legend_info$Area, pch=19, col=legend_info$color, bty='n', cex=0.8)
+
+
+```
+
+Here is another plot of the same data by area. I have just separated the plots by area. The data and results are the same as in the previous figure.  
+
+I do not see any obvious annual trends overall.  I suppose at Anacapa most 'blob' years are to the lower right, but that is it.  You could look more closely.  
+
+So, from the nMDS there are some obvious differences in assemblage structure among sites, but no super obvious year trends.
+
+
+```{r nMDS_area_plotted_by_area , fig.width=6.5 , fig.height=8}
+
+dfa1 = cbind( labels_area , dfa)
+area = levels(as.factor(dfa1$AreaDesc))
+par( mfrow = c(4,2) , pty='s', mar = c(4,1,2,1))
+
+# lims = c( min( c(dfa1$NMDS1,dfa1$NMDS2)) , max( c(dfa1$NMDS1,dfa1$NMDS2) ) )
+
+for(i in 1:length(area)){
+  
+  dfx = dfa1[ dfa1$AreaDesc == area[i], ]
+  # expansion.factor = 1.2
+  # XLIM = c(min(dfx$NMDS1)*expansion.factor , max(dfx$NMDS1)*expansion.factor )
+  # YLIM = c(min(dfx$NMDS2)*expansion.factor , max(dfx$NMDS2)*expansion.factor )
+  plot( dfx$NMDS1 , dfx$NMDS2 , pch=21, cex = 3, xlab = 'Axis 1', ylab = 'Axis 2')
+  text( dfx$NMDS1 , dfx$NMDS2, substring(dfx$SurveyYear,3,4) , cex =1, pos=1, offset=-0.4 )
+  title(main = area[i] , line = 0.5)
+  
+  
+}
+
+
+
+```
+
+# Canonical analysis of prinicpal coordinates
+
+I also set up a canonical analysis of principal coordinates (CAP). CAP is a constrained ordination. A constrained ordination means that the stats know that sites or some other independent variables constrain the data. Essentially this means that you have an hypothesis or two - eg, Assemblages differ among sites. As a result, the ordination statistics try to draw the axes differently.  
+
+```{r capscale_redundancy_analysis_and_plot  }
+
+labels_site$AreaDesc = factor(labels_site$AreaDesc)
+labels_site$SurveyYear = factor(labels_site$SurveyYear)
+labels_site$Site_Year = factor(paste(labels_site$AreaDesc, labels_site$SurveyYear, sep="_"))
+
+perms = NA
+
+# cap1 = BiodiversityR::CAPdiscrim( fish_site_level  ~ Site_Year , data = labels_site, dist = "bray" , add=TRUE)
+cap1 = BiodiversityR::CAPdiscrim( fish_site_level  ~ AreaDesc , data = labels_site, dist = "bray" , add=TRUE )
+cap2 = add.spec.scores(cap1 , fish_site_level)
+# cap1 = capscale( fish_site_level  ~ AreaDesc + SurveyYear , data = labels_site, dist = "bray" , add=TRUE)
+
+saveRDS( cap2 , paste0(Out_File, "CAP_Sites.rds"))
+cap2 <- readRDS(   paste0(Out_File, "CAP_Sites.rds"))
+
+x = cap1$manova
+p = ifelse( x$stats[1,6] < 0.001 , "p < 0.001" , paste0("p = ", round(x$stats[1,6]<0.001,3)))
+
+
+# test for multivariate dispersion
+
+d1 = vegdist( fish_site_level , method = 'bray')
+bd1 = betadisper(d1, labels_site$AreaDesc)
+an1 = anova(bd1)
+names(an1) = c("Df", "Sum Sq", "Mean Sq", "F value" ,"p")
+bdp = ifelse( an1$p[[1]] < 0.001 , "p < 0.001" , paste0("p = " , round(an1$p[[1]] , 3)))
+
+```
+The above readout is *classification success*. The stats...
+1. Develops a model to classify samples to site based on the assemblage structure of the catch
+2. Looks at an individual sample and decides to which site  it shoudl be allocated
+3. Then checks whether that is correct.
+
+With eight `r length(levels(labels_site$AreaDesc))` areas, you would expect a `r 1/length(levels(labels_site$AreaDesc))*100`% success rate at random, so the classification success is pretty good, especially for Santa Rosa Flats. 
+
+For the CAP, I included Area as a fixed, categorical variable. I did not include year because some areas or many areas had only one 'sample' in a given year. That makes it impossible to run the stats.  We can still plot the results identifying years and see whether there is any sort of trend, however.  
+
+I used `r perms` permutations.  
+
+Anderson, M. J., and T. J. Willis. 2003. Canonical analysis of principal coordinates: A useful method of constrained ordination for ecology. Ecology 84:511-525.
+
+
+
+```{r Plot_CAP_1 ,  fig.height=6, fig.width=6, fig.cap="Canonical analysis of principal coordinates. Bray-Curtis distance."}
+
+par(pty = 's', mfrow=c(2,2), mar = c(3,4,1,1) )
+ordiplot(cap2 , display = 'sites')
+segments(par()$usr[1], 0 , par()$usr[2] ,0 , lty = 'dotted')
+segments( 0 , par()$usr[3], 0 , par()$usr[4] , lty = 'dotted')
+
+cap1_scores = scores(cap1)
+points(cap1_scores[,1] , cap1_scores[,2], pch=19, col=labels_site$color)
+
+ordiplot(cap2 , display = 'species', type='text')
+segments(par()$usr[1], 0 , par()$usr[2] ,0 , lty = 'dotted')
+segments( 0 , par()$usr[3], 0 , par()$usr[4] , lty = 'dotted')
+
+plot(1:10, 1:10, pch='', xaxt='n', yaxt='n' , bty='n', xlab=NA, ylab=NA)
+legend('topleft' , legend = legend_info$Area, pch=19, col=legend_info$color, bty='n', cex=0.8)
+
+```
+
+
+The ordination was significant (`r p` ). I've done two plots. The first is the 'raw' scores. That is, there is one point for each sample in the original data set. For the second plot, I've plotted the centroids and se.  It is a bit cleaner and easier to see.
+
+Note, however, that while the CAP analysis was significant, there was also significant multivariate dispersion (`r bdp`), which is more or less multivariate-heterogeneity of variance.  This does not ruin the analysis; it must means be cautious in interpretation. The ordinations are pretty clear, so I think it is ok.  You can tell, however, that the area over which various sites are spread differs. Nevertheless, the points do not overlap that much for some sites.  
+
+```{r CAP_means_plot , fig.width=6, fig.height=6, fig.cap="Canonical analysis of principal coordinates using Bray-Curtis dissimilarity. Data are centroids by area and year. Error bars represent +/- 1.0 s.e. Numbers are the tens digits for the year of the survey."}
+
+x1 = cbind(labels_site, cap1_scores)
+x2 = x1[,c("SurveyYear", "AreaDesc" ,  "LD1" , "LD2")]
+xmn = aggregate( . ~ SurveyYear + AreaDesc , data = x2 , FUN=mean)
+xsd = aggregate( . ~ SurveyYear + AreaDesc , data = x2 , FUN=sd)
+x2$n = 1
+xn = aggregate( n ~ SurveyYear + AreaDesc , data = x2 , FUN=sum)
+colnames(xsd)[3:4] <- c('sd1','sd2')
+
+x =  merge( xmn , xsd , by = c( 'SurveyYear', 'AreaDesc' ) , all=TRUE )
+x =  merge( x, xn , by = c( 'SurveyYear', 'AreaDesc' ) )
+x$color = legend_info$color[ match(x$AreaDesc , legend_info$Area) ]
+
+
+x$se1 = x$sd1/sqrt(x$n)
+x$se2 = x$sd2/sqrt(x$n)
+
+par(pty = 's' , ps = 10, cex = 1 , mfrow = c(2,2) , mar = c(4,4,1,1))
+plot( x$LD1 , x$LD2 , xlab = "LD1" , ylab = "LD2", pch=19 , col=x$color , cex = 2)
+
+segments(par()$usr[1], 0 , par()$usr[2] ,0 , lty = 'dotted')
+segments( 0 , par()$usr[3], 0 , par()$usr[4] , lty = 'dotted')
+
+arrows( x$LD1 + x$se1, x$LD2 , x$LD1 - x$se1 , x$LD2 , length = 0 , col=x$color)
+arrows( x$LD1, x$LD2  + x$se2, x$LD1 , x$LD2  - x$se2, length = 0 , col=x$color)
+
+text( x$LD1 , x$LD2 , substring(x$SurveyYear, 3,4), cex = 0.7, offset=0) 
+
+ordiplot(cap2 , display = 'species', type='text' , xlim=c(-0.8,0.8), ylim=c(-0.8, 0.8))
+segments(par()$usr[1], 0 , par()$usr[2] ,0 , lty = 'dotted')
+segments( 0 , par()$usr[3], 0 , par()$usr[4] , lty = 'dotted')
+
+plot(1:10, 1:10, pch='', xaxt='n', yaxt='n' , bty='n', xlab=NA, ylab=NA)
+legend('topleft' , legend = legend_info$Area, pch=19, col=legend_info$color, bty='n', cex=0.8)
+
+```
+
+# MARSS analysis - Boaccio population trends
+
+I started messing with some MARSS analyses.  We could use this type of analysis to see if population trends are the same at all Areas, in this case for Bocaccio.  There aren't quite enough data for MARSS to work really well.  We can't estimate Q, which is process variance. I haven't coded in any model selection to test multiple models, but one could.
+
+```{r MARSS}
+Species = "Bocaccio"
+
+dat0 = cbind(labels_area[,c('SurveyYear','AreaDesc')], fish_area_level[,Species])
+colnames(dat0) <- c('Year' , 'Area', Species)
+
+dat1 = spread(dat0 , 'Year' , Species)
+rownames(dat1) = dat1$Area
+dat2 = dat1[,-1]
+dat2[dat2==0] <- NA
+dat3 = log(dat2)
+marss.dat = as.matrix(dat3)
+
+library(MARSS)
+
+marss.model = list()
+marss.model$R = 'diagonal and equal'
+marss.model$Q = 'diagonal and equal'
+marss.model$B = 'identity'
+marss.model$Z = 'identity'
+marss.model$U = 'equal'
+marss.model$A = 'scaling'
+
+m1 = MARSS( marss.dat, model = marss.model , control = list(maxit=2000) ) 
+#best_model = m1
+m1$AICc
+
+saveRDS(m1 , "MARSS.rds")
+best_model = readRDS("MARSS.rds")
+
+years = as.numeric(colnames(marss.dat))
+YLIM = c( min(best_model$states), max(best_model$states) )
+plot(years, best_model$states[1,], type='p', pch='', ylim=YLIM , ylab='log(abundance) index')
+
+for(i in 1:nrow(best_model$states)){
+  lines(years, best_model$states[i,])
+}
+
+
+```
+
+
+# Dynamic Factor Analysis - Spp Assemblage throug time
+
+I also ran a dynamic factor analysis to look for common trends among species.  I averaged species abundance for each year. Thus there is no site-level information in the analysis here. Just Average abundance in a given year.  I then ran a dyniamic factor analysis, which is a bit like a PCA but with autocorrelation. That is, the abundance of bocaccio in 2015 is a function of bocaccio abundance in 2014.  
+
+This analysis is pretty preliminary. I didn't run tons of iterations, so many of the models don't converge.
+
+```{r Dynamic_Factor_Analysis , fig.width=3.5, fig.height=2.5, fig.cap='Prelim Dynamic Factor results' , include = FALSE}
+
+dat0 = cbind(labels_site$SurveyYear, fish_site_level)
+colnames(dat0)[1] <- 'Year'
+dat1 = aggregate( . ~ Year , data = dat0 , FUN = mean)
+
+dat2 = t(dat1[,-1])
+rownames(dat2) = sppx
+years =2004:2019
+colnames(dat2) = paste0('y',years)
+dfa.dat = dat2
+
+# run model selection for a regular DFA
+# place to put things
+dfa.list = list()
+for(i in 1:3){
+  
+  model.list = list(m=i, R="diagonal and equal")
+  dfa_x = MARSS( dfa.dat , form='dfa' , z.score=TRUE,  model=model.list)
+  dfa.list[[i]] = dfa_x
+  names(dfa.list)[[i]] = paste0('dfa_m',i)
+
+  if(i==1){
+    aicc = data.frame(cbind(paste0('dfa_m',i), dfa_x$AIC , dfa_x$AICc))
+  }else{
+    aicx = data.frame(cbind(paste0('dfa_m',i), dfa_x$AIC , dfa_x$AICc))
+    aicc = rbind(aicc, aicx)
+  }
+
+} # end i
+colnames(aicc) <- c('Model','AIC', 'AICc')
+aicc$AIC = as.numeric(aicc$AIC)
+aicc$AICc = as.numeric(aicc$AICc)
+aicc <- aicc[ order(aicc$AICc) ,]
+aicc$deltaAICc = aicc$AICc - aicc$AICc[1]
+aicc
+
+best_model = dfa.list[[aicc$Model[1]]]
+
+```
+
+I did some model fitting and only one trend emerged from the assemblage data. By looking at the loadings table you can see which species were positively correlated with the trend and which wer negatively correlated with the trend.  THe loadings (Z) are not actually correlations but the sign gives the direction.
+
+The trend in the figure below suggests that some species have generally increased in abundance through time while others have decreased.
+
+```{r Rotate_Loadings}
+
+# rotate trends
+Z.est = coef(best_model, type="matrix")$Z
+H.inv = 1
+if(ncol(Z.est)>1) H.inv = varimax(coef(dfa1, type="matrix")$Z)$rotmat
+Z.rot = Z.est %*% H.inv
+trends.rot = solve(H.inv) %*% best_model$states
+
+# Z.rot
+
+loadings.table = data.frame(cbind(sppx, Z.rot))
+colnames(loadings.table) <- c('Species', "Loading")
+loadings.table$Loading = as.numeric(loadings.table$Loading)
+loadings.table$Loading = round(loadings.table$Loading , 3)
+
+
+loadings.table %>% flextable() %>% autofit() %>% # flextable makes pretty tables
+             add_header_lines("Table XX. DFA Species loadings")
+
+```
+
+
+
+```{r Plot_Trends}
+par(mfrow=c(1,1))
+plot(years, trends.rot[1,], type='b', ylab = "DFA trend")
+axis(1,at=years,labels = NA)
+# plot(years, trends.rot[2,], type='b')
+# par(pty='s')
+ # plot( trends.rot[1,], trends.rot[2,], type='b')
+
+#dfa1$AICc
+
+```
+
+
+
+
+
+
+
+
